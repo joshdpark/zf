@@ -10,13 +10,28 @@ fn indexOf(
     value: T,
     comptime case_sensitive: bool,
 ) ?usize {
+    const vector_size = std.simd.suggestVectorLength(u8) orelse 16;
+    const char_vec_t = @Vector(vector_size, u8);
     var i: usize = start_index;
-    while (i < slice.len) : (i += 1) {
-        if (case_sensitive) {
-            if (slice[i] == value) return i;
-        } else {
-            if (std.ascii.toLower(slice[i]) == value) return i;
+    while (i + vector_size < slice.len) : (i += vector_size) {
+        var vec: char_vec_t = slice[i..][0..vector_size].*;
+        // use simd to get a wide register of all the characters as lowercase
+        if (!case_sensitive) {
+            const upper: char_vec_t = @intFromBool(vec >= @as(char_vec_t, @splat('A')));
+            const lower: char_vec_t = @intFromBool(vec <= @as(char_vec_t, @splat('Z')));
+            var mask = upper & lower;
+            mask <<= @as(char_vec_t, @splat(5));
+            vec |= mask;
         }
+        vec ^= @as(char_vec_t, @splat(value)); // if any match, then it will be zero
+        if (std.simd.firstIndexOfValue(vec, 0)) |idx| {
+            return i + idx;
+        }
+    }
+    while (i < slice.len) : (i += 1) {
+        var char: u8 = slice[i];
+        if (case_sensitive) char = std.ascii.toLower(char);
+        if (char == value) return i;
     }
     return null;
 }
