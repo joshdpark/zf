@@ -13,9 +13,14 @@ fn indexOf(
     const vector_size = std.simd.suggestVectorLength(u8) orelse 16;
     const char_vec_t = @Vector(vector_size, u8);
     var i: usize = start_index;
-    while (i + vector_size < slice.len) : (i += vector_size) {
-        var vec: char_vec_t = slice[i..][0..vector_size].*;
-        // use simd to get a wide register of all the characters as lowercase
+    while (i < slice.len) : (i += vector_size) {
+        // to handle slices smaller than the vector length, copy into an array of zeros
+        // inspired by https://ogxd.github.io/articles/unsafe-read-beyond-of-death/
+        var tmp = [_]u8{0} ** vector_size;
+        const width = @min(slice.len - i, vector_size);
+        @memcpy(tmp[0..][0..width], slice[i..][0..width]);
+        var vec: char_vec_t = tmp;
+        // use simd mask to upper ascii to lower
         if (!case_sensitive) {
             const upper: char_vec_t = @intFromBool(vec >= @as(char_vec_t, @splat('A')));
             const lower: char_vec_t = @intFromBool(vec <= @as(char_vec_t, @splat('Z')));
@@ -23,15 +28,10 @@ fn indexOf(
             mask <<= @as(char_vec_t, @splat(5));
             vec |= mask;
         }
-        vec ^= @as(char_vec_t, @splat(value)); // if any match, then it will be zero
-        if (std.simd.firstIndexOfValue(vec, 0)) |idx| {
-            return i + idx;
+        const result = vec == @as(char_vec_t, @splat(value)); // if any match, then it will be zero
+        if (std.simd.firstIndexOfValue(result, true)) |match| {
+            return i + match;
         }
-    }
-    while (i < slice.len) : (i += 1) {
-        var char: u8 = slice[i];
-        if (case_sensitive) char = std.ascii.toLower(char);
-        if (char == value) return i;
     }
     return null;
 }
